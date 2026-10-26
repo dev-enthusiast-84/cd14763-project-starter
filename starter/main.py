@@ -35,6 +35,7 @@ import uuid
 from typing import Dict
 from bedrock_agentcore.tools.code_interpreter_client import code_session
 from strands_tools.browser import AgentCoreBrowser
+from pydantic import BaseModel, Field, ValidationError
 
 
 logging.basicConfig(level=logging.WARNING)
@@ -58,9 +59,6 @@ os.environ["BYPASS_TOOL_CONSENT"] = "true"
 # ── TODO 2 — Configuration ────────────────────────────────────────────────────
 # Replace the placeholder strings with your actual AWS resource values.
 # You collected these in Part 1 of the INSTRUCTIONS.
-#
-# NOTE: Code has been tested with actual values. Fill in your own values below
-# to test. Remove before final commit to prevent credential leakage.
 #
 # GATEWAY_URL format: https://<alias>.gateway.bedrock-agentcore.<region>.amazonaws.com/mcp
 # KB_ID       format: 10-character alphanumeric string from the KB console
@@ -91,6 +89,26 @@ memory_client = MemoryClient(region_name=REGION)  # Replace this line
 
 # TODO: Create the boto3 bedrock-agent-runtime client
 _bedrock_runtime = boto3.client("bedrock-agent-runtime", region_name=REGION)  # Replace this line
+
+
+# ── Pydantic Output Models ─────────────────────────────────────────────────────
+class DiscountResult(BaseModel):
+    """Validated output structure for calculate_loyalty_discount.
+
+    Enforces business-rule constraints on the discount breakdown so that
+    malformed or out-of-range values are caught before being returned to the
+    caller or the LLM.
+    """
+
+    original_total: float
+    points_redeemed: int
+    points_discount: float
+    tier_discount_pct: float
+    tier_discount: float
+    final_total: float = Field(..., ge=0, description="Must be non-negative")
+    total_savings: float = Field(..., ge=0, description="Must be non-negative")
+    points_earned: int = Field(..., ge=0, description="Must be non-negative")
+    remaining_points: int
 
 
 # ── TODO 4 — Namespace Helper ─────────────────────────────────────────────────
@@ -263,6 +281,96 @@ class MemoryHook(HookProvider):
         registry.add_callback(AfterInvocationEvent, self.save_support_interaction)
 
 
+# ── Conversation Summarization Hook ───────────────────────────────────────────
+class SummarizationHook(HookProvider):
+    """Summarize old turns when session history exceeds MAX_TURNS.
+
+    Preserves context across long conversations while avoiding runaway token
+    costs.  When the total user+assistant message count exceeds MAX_TURNS,
+    the oldest messages (everything beyond the KEEP_RECENT most recent) are
+    replaced with a single AI-generated summary injected as a user-role
+    system note.  Recent turns are kept verbatim so the agent always has
+    immediate context.
+    """
+
+    MAX_TURNS = 10   # Trigger threshold (user + assistant messages combined)
+    KEEP_RECENT = 4  # Number of recent messages to preserve verbatim
+
+    def __init__(self) -> None:
+        self._bedrock = boto3.client("bedrock-runtime", region_name=REGION)
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_text(content) -> str:
+        if isinstance(content, list):
+            return " ".join(
+                b.get("text", "") for b in content
+                if isinstance(b, dict) and "text" in b
+            )
+        return str(content) if content else ""
+
+    @staticmethod
+    def _is_tool_result(content) -> bool:
+        if isinstance(content, list):
+            return any("toolResult" in b for b in content if isinstance(b, dict))
+        return False
+
+    def _turn_count(self, messages) -> int:
+        return sum(1 for m in messages if m.get("role") in ("user", "assistant"))
+
+    # ── hook callback ─────────────────────────────────────────────────────────
+
+    def summarize_if_needed(self, event: MessageAddedEvent) -> None:
+        """Collapse old turns into a summary block when history grows too long."""
+        messages = event.agent.messages
+        if self._turn_count(messages) <= self.MAX_TURNS:
+            return
+
+        cut = max(0, len(messages) - self.KEEP_RECENT)
+        old_messages, recent_messages = messages[:cut], messages[cut:]
+
+        # Build a plain-text transcript of the old turns (skip tool results)
+        lines: list[str] = []
+        for msg in old_messages:
+            role = msg.get("role", "")
+            if role not in ("user", "assistant"):
+                continue
+            content = msg.get("content", "")
+            if self._is_tool_result(content):
+                continue
+            text = self._extract_text(content).strip()
+            if text:
+                lines.append(f"{role.capitalize()}: {text}")
+
+        if not lines:
+            return  # Nothing useful to summarize
+
+        prompt = (
+            "Summarize the following customer support conversation in 3–5 sentences. "
+            "Preserve any order numbers, product names, and stated customer preferences:\n\n"
+            + "\n".join(lines)
+        )
+        try:
+            resp = self._bedrock.converse(
+                modelId=model_id,
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+            )
+            summary_text = resp["output"]["message"]["content"][0]["text"]
+            summary_msg: Dict = {
+                "role": "user",
+                "content": [{"text": f"[Earlier conversation summary]: {summary_text}"}],
+            }
+            # Replace the old section with the compact summary
+            event.agent.messages[:] = [summary_msg] + list(recent_messages)
+            logger.info("Summarised %d old messages into a single summary block.", len(old_messages))
+        except Exception as exc:
+            logger.warning("Conversation summarization skipped (%s): %s", type(exc).__name__, exc)
+
+    def register_hooks(self, registry: HookRegistry) -> None:
+        registry.add_callback(MessageAddedEvent, self.summarize_if_needed)
+
+
 # ── TODO 6 — Knowledge Base Tool ─────────────────────────────────────────────
 # Implement search_knowledge_base(query) using the @tool decorator.
 #
@@ -402,7 +510,13 @@ print(json.dumps({{
                 result = events[0].get("result", {})
                 structured = result.get("structuredContent", {})
                 if structured.get("exitCode", 1) == 0:
-                    return structured.get("stdout", "")
+                    raw = structured.get("stdout", "")
+                    try:
+                        validated = DiscountResult.model_validate_json(raw)
+                        return validated.model_dump_json(indent=2)
+                    except ValidationError as ve:
+                        logger.warning("DiscountResult validation failed: %s", ve)
+                        return raw
                 return json.dumps({"error": structured.get("stderr", "Execution failed")})
             return json.dumps({"error": "No output from code interpreter"})
 
@@ -419,7 +533,7 @@ print(json.dumps({{
         tier_discount = subtotal * pct
         final_total = subtotal - tier_discount
         points_earned = int(order_total * earn_rates.get(product_category, 1))
-        return json.dumps({
+        raw = json.dumps({
             "original_total": order_total,
             "points_redeemed": points_used,
             "points_discount": points_redeemed_val,
@@ -430,6 +544,12 @@ print(json.dumps({{
             "points_earned": points_earned,
             "remaining_points": loyalty_points - points_used + points_earned,
         })
+        try:
+            validated = DiscountResult.model_validate_json(raw)
+            return validated.model_dump_json(indent=2)
+        except ValidationError as ve:
+            logger.warning("DiscountResult validation failed in fallback: %s", ve)
+            return raw
 
 
 # ── TODO 8 — Agent Entrypoint ─────────────────────────────────────────────────
@@ -497,10 +617,11 @@ async def invoke(payload, context=None):
                 "Never call the same tool more than once. "
                 "If a tool fails or returns no useful data, tell the customer you are unable to help with that request."
             )
+            summarization_hook = SummarizationHook()
             agent = Agent(
                 model=model,
                 tools=tools,
-                hooks=[memory_hook],
+                hooks=[memory_hook, summarization_hook],
                 system_prompt=system_prompt,
             )
             response = await asyncio.wait_for(

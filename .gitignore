@@ -1,0 +1,88 @@
+# Environment and credentials
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+credentials.json
+aws_credentials
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.virtualenv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Node (if applicable)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Project-specific
+.agentcore/
+deployment/
+*.log
+*.bak
+
+# Secrets and sensitive files
+.secrets/
+secrets.json
+config.prod.json
+*.private
+keystore/
+
+# AWS specific
+aws-credentials
+.aws/credentials
+.aws/config
+
+# Dependencies lock files (optional - uncomment if needed)
+# uv.lock
+# package-lock.json
+# poetry.lock
+
+# Temporary files
+*.tmp
+*.temp
+.cache/

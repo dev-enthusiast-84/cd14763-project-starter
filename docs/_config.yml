@@ -5,3 +5,12 @@ logo: https://img.shields.io/badge/AWS-Bedrock-FF9900?style=flat
 show_downloads: true
 github:
   repository_url: https://github.com/dev-enthusiast-84/cd14763-project-starter
+
+# Navigation
+nav_order: 1
+url: https://dev-enthusiast-84.github.io/cd14763-project-starter
+
+# Plugins
+plugins:
+  - jekyll-relative-links
+  - jekyll-sitemap

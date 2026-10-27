@@ -340,6 +340,21 @@ agentcore invoke '{"prompt": "Go to https://www.udacity.com and tell me the page
 
 ---
 
+## 📖 Project Documentation
+
+Complete documentation is available on the **[GitHub Pages site](https://dev-enthusiast-84.github.io/cd14763-project-starter/)**.
+
+### Quick Links to Key Docs
+
+- **[Setup Guide](https://dev-enthusiast-84.github.io/cd14763-project-starter/SETUP)** — Step-by-step deployment instructions (840+ lines)
+- **[Architecture](https://dev-enthusiast-84.github.io/cd14763-project-starter/ARCHITECTURE)** — System design and component overview
+- **[Testing Guide](https://dev-enthusiast-84.github.io/cd14763-project-starter/TESTING)** — Test scenarios with expected outputs
+- **[API Reference](https://dev-enthusiast-84.github.io/cd14763-project-starter/API)** — Tool schema and payload details
+- **[Cleanup Guide](https://dev-enthusiast-84.github.io/cd14763-project-starter/CLEANUP)** — Resource deletion procedures
+- **[Security](https://dev-enthusiast-84.github.io/cd14763-project-starter/SECURITY)** — Security audit and best practices
+
+---
+
 ## Helpful References
 
 - [Amazon Bedrock AgentCore Documentation](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html)

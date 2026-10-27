@@ -1,0 +1,7 @@
+theme: jekyll-theme-minimal
+title: Customer Support AI Agent
+description: AWS AI Engineering Nanodegree - Capstone Project
+logo: https://img.shields.io/badge/AWS-Bedrock-FF9900?style=flat
+show_downloads: true
+github:
+  repository_url: https://github.com/dev-enthusiast-84/cd14763-project-starter

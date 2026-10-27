@@ -1,3 +1,6 @@
+# Environment — contains real resource IDs and secrets.
+# Named .env.agent (not .env) so the AgentCore packager includes it in the deployment zip.
+.env.agent
 # Environment and credentials
 .env
 .env.local

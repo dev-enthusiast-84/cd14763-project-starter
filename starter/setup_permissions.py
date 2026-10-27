@@ -18,7 +18,34 @@ import yaml
 POLICY_NAME = "CustomerSupportIntegrations"
 
 
-def read_settings(source):
+def _read_dotenv(env_path):
+    """Parse a .env file and return a dict of key→value strings.
+
+    Handles bare values and values wrapped in single or double quotes.
+    Lines starting with # and blank lines are ignored.
+    """
+    result = {}
+    try:
+        for line in Path(env_path).read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            val = val.strip().strip("\"'")
+            result[key.strip()] = val
+    except OSError:
+        pass
+    return result
+
+
+def read_settings(source, env_path=None):
+    """Extract KB_ID, MEMORY_ID and REGION from main.py source.
+
+    First tries ast.literal_eval on each assignment (works when the variables
+    are set to plain string literals).  If a value is not a literal — e.g.
+    because the code uses os.environ.get() — the function falls back to the
+    .env file at *env_path* so that the same workflow works with either style.
+    """
     settings = {}
     for node in ast.parse(source).body:
         if isinstance(node, ast.Assign):
@@ -33,6 +60,14 @@ def read_settings(source):
                     settings[name] = ast.literal_eval(node.value)
                 except (ValueError, TypeError):
                     settings[name] = None
+
+    # Fall back to .env for any value that couldn't be literal-eval'd.
+    if env_path and any(v is None for v in settings.values()):
+        env_vars = _read_dotenv(env_path)
+        for name in ("KB_ID", "MEMORY_ID", "REGION"):
+            if settings.get(name) is None and name in env_vars:
+                settings[name] = env_vars[name]
+
     patterns = {
         "KB_ID": r"[A-Za-z0-9]{10}",
         "MEMORY_ID": r"[A-Za-z][A-Za-z0-9_]{0,99}-[A-Za-z0-9]{10}",
@@ -41,7 +76,10 @@ def read_settings(source):
     for name, pattern in patterns.items():
         value = settings.get(name)
         if not isinstance(value, str) or not re.fullmatch(pattern, value):
-            raise ValueError(f"Set {name} to your resource's literal string value in main.py first.")
+            raise ValueError(
+                f"{name} could not be resolved. "
+                f"Either assign it as a literal string in main.py or add it to the .env file."
+            )
     return settings
 
 
@@ -124,7 +162,10 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true", help="Print the policy without calling AWS")
     args = parser.parse_args(argv)
     try:
-        settings = read_settings(args.main.read_text(encoding="utf-8"))
+        settings = read_settings(
+            args.main.read_text(encoding="utf-8"),
+            env_path=root / ".env",
+        )
         config = yaml.safe_load(args.config.read_text(encoding="utf-8"))
         name, partition, account, role, role_name, runtime = deployment(config, args.agent, settings["REGION"])
         policy = build_policy(partition, account, settings)

@@ -27,6 +27,7 @@ from strands.tools.mcp.mcp_client import MCPClient
 from mcp.client.streamable_http import streamable_http_client
 import argparse, json
 import os, asyncio, boto3
+from pathlib import Path
 from strands.hooks import (
     HookProvider, AfterInvocationEvent, HookRegistry, MessageAddedEvent,
 )
@@ -37,6 +38,9 @@ from bedrock_agentcore.tools.code_interpreter_client import code_session
 from strands_tools.browser import AgentCoreBrowser
 from pydantic import BaseModel, Field, ValidationError
 
+
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env.agent")
 
 _log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, _log_level, logging.INFO))
@@ -66,13 +70,10 @@ os.environ["BYPASS_TOOL_CONSENT"] = "true"
 # REGION:     your AWS region, e.g. "us-east-1"
 # MEMORY_ID   format: shown in the AgentCore Memory console
 
-# Note: The testing was done with actual values but removed for security reasons. 
-# Please replace the placeholders with your actual values before running the code.
-
-GATEWAY_URL = "<gateway_url>"   # TODO: Replace with your Gateway URL
-KB_ID       = "<kbid>"          # TODO: Replace with your Knowledge Base ID
-REGION      = "<region>"        # TODO: Replace with your AWS region
-MEMORY_ID   = "<mem_id>"        # TODO: Replace with your Memory ID
+GATEWAY_URL = os.environ.get("GATEWAY_URL", "")
+KB_ID       = os.environ.get("KB_ID", "")
+REGION      = os.environ.get("REGION", "us-east-1")
+MEMORY_ID   = os.environ.get("MEMORY_ID", "")
 
 
 # ── TODO 3 — Model and Clients ────────────────────────────────────────────────
@@ -229,8 +230,11 @@ class MemoryHook(HookProvider):
 
         # Step 6: If any found, prepend them to the user message
         if memory_texts:
-            context_block = "Customer Context:\n" + "\n".join(memory_texts)
-            last_message["content"] = [{"text": f"{context_block}\n\n{query}"}]
+            context_block = (
+                "Customer Context (background only — answer the current request below, not these memories):\n"
+                + "\n".join(memory_texts)
+            )
+            last_message["content"] = [{"text": f"{context_block}\n\nCurrent request: {query}"}]
 
     def save_support_interaction(self, event: AfterInvocationEvent):
         """Save the completed turn to memory after the agent responds."""
@@ -264,7 +268,11 @@ class MemoryHook(HookProvider):
                     if not any("toolResult" in b for b in content):
                         text = " ".join(b.get("text", "") for b in content if "text" in b)
                         if text.strip():
-                            customer_query = text
+                            # Strip context augmentation added by retrieve_customer_context
+                            # so we save only the original query, not the memory-augmented form.
+                            marker = "Current request: "
+                            idx = text.find(marker)
+                            customer_query = text[idx + len(marker):] if idx != -1 else text
             if customer_query and agent_response:
                 break
 
@@ -470,20 +478,20 @@ order_total = {order_total}
 product_category = "{product_category}"
 
 earn_rates = {{"standard": 1, "device": 2, "fresh": 5}}
-tier_rates = {{"Silver": 0.00, "Gold": 0.10, "Platinum": 0.15}}
+tier_rates = {{"Silver": 0, "Gold": 10, "Platinum": 15}}
 
 points_value = (loyalty_points // 500) * 5.0
 max_redemption = order_total * 0.50
-points_redeemed = min(points_value, max_redemption)
+points_redeemed = round(min(points_value, max_redemption), 2)
 points_used = int((points_redeemed / 5.0) * 500)
 
-subtotal_after_points = order_total - points_redeemed
-tier_discount_pct = tier_rates.get(tier, 0.0)
-tier_discount = subtotal_after_points * tier_discount_pct
-final_total = subtotal_after_points - tier_discount
+subtotal_after_points = round(order_total - points_redeemed, 2)
+tier_discount_pct = tier_rates.get(tier, 0)
+tier_discount = round(subtotal_after_points * (tier_discount_pct / 100), 2)
+final_total = round(subtotal_after_points - tier_discount, 2)
 
 total_savings = order_total - final_total
-points_earned = int(order_total * earn_rates.get(product_category, 1))
+points_earned = int(final_total * earn_rates.get(product_category, 1))
 remaining_points = loyalty_points - points_used + points_earned
 
 print(json.dumps({{
@@ -524,28 +532,21 @@ print(json.dumps({{
             return json.dumps({"error": "No output from code interpreter"})
 
     except Exception as e:
-        logger.warning(f"Code Interpreter unavailable, using fallback ({type(e).__name__}): {e}")
-        earn_rates = {"standard": 1, "device": 2, "fresh": 5}
-        tier_rates = {"Silver": 0.00, "Gold": 0.10, "Platinum": 0.15}
-        pct = tier_rates.get(tier, 0.0)
-        points_value = (loyalty_points // 500) * 5.0
-        max_redemption = order_total * 0.50
-        points_redeemed_val = min(points_value, max_redemption)
-        points_used = int((points_redeemed_val / 5.0) * 500)
-        subtotal = order_total - points_redeemed_val
-        tier_discount = subtotal * pct
-        final_total = subtotal - tier_discount
-        points_earned = int(order_total * earn_rates.get(product_category, 1))
+        logger.warning(f"Code Interpreter unavailable, using tier-only fallback ({type(e).__name__}): {e}")
+        tier_rates = {"Silver": 0, "Gold": 10, "Platinum": 15}
+        pct = tier_rates.get(tier, 0)
+        tier_discount = round(order_total * (pct / 100), 2)
+        final_total = round(order_total - tier_discount, 2)
         raw = json.dumps({
             "original_total": order_total,
-            "points_redeemed": points_used,
-            "points_discount": points_redeemed_val,
+            "points_redeemed": 0,
+            "points_discount": 0.0,
             "tier_discount_pct": pct,
-            "tier_discount": round(tier_discount, 2),
-            "final_total": round(final_total, 2),
-            "total_savings": round(order_total - final_total, 2),
-            "points_earned": points_earned,
-            "remaining_points": loyalty_points - points_used + points_earned,
+            "tier_discount": tier_discount,
+            "final_total": final_total,
+            "total_savings": tier_discount,
+            "points_earned": 0,
+            "remaining_points": loyalty_points,
         })
         try:
             validated = DiscountResult.model_validate_json(raw)
@@ -631,14 +632,16 @@ async def invoke(payload, context=None):
                 "Use the available tools to answer customer questions accurately about "
                 "products, orders, returns, warranties, and loyalty rewards. "
                 "Always be polite, concise, and helpful. "
-                "Call each non-browser tool at most once per request. "
-                "Once a non-browser tool returns any result, use that result to answer the customer immediately. "
-                "The browser tool is an exception: it requires multiple sequential calls to complete a task "
+                "For a refund request: first look up the order with the order-tracking tool to get the order total, "
+                "then call initiate_refund with the order_id, a reason, and amount set to the order total. "
+                "Report the refund ID, APPROVED status, amount, and the 3-5 business day credit window to the customer. "
+                "Never initiate the same refund twice. "
+                "The browser tool requires multiple sequential calls to complete a task "
                 "(init_session → navigate → get content → close) — always follow this sequence without skipping steps. "
                 "Browser session names must use only lowercase letters, numbers, and hyphens "
                 "(no underscores or spaces), and be between 10 and 36 characters long — "
                 "for example 'udacity-session-01' not 'udacity_session'. "
-                "If any non-browser tool fails or returns no useful data, tell the customer you are unable to help with that request."
+                "If any tool fails or returns no useful data, tell the customer you are unable to help with that request."
             )
             summarization_hook = SummarizationHook()
             agent = Agent(

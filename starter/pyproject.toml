@@ -14,5 +14,11 @@ dependencies = [
     "strands-agents>=1.28.0",
     "strands-agents-tools>=0.2.21",
     "urllib3>=2.6.3",
+    "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
+]
+
+[tool.uv.workspace]
+members = [
+    "customer-support-agent",
 ]

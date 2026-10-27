@@ -38,7 +38,8 @@ from strands_tools.browser import AgentCoreBrowser
 from pydantic import BaseModel, Field, ValidationError
 
 
-logging.basicConfig(level=logging.WARNING)
+_log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, _log_level, logging.INFO))
 logger = logging.getLogger("CSAI_Agent")
 
 # ── TODO 1 — App Initialisation ───────────────────────────────────────────────
@@ -64,6 +65,9 @@ os.environ["BYPASS_TOOL_CONSENT"] = "true"
 # KB_ID       format: 10-character alphanumeric string from the KB console
 # REGION:     your AWS region, e.g. "us-east-1"
 # MEMORY_ID   format: shown in the AgentCore Memory console
+
+# Note: The testing was done with actual values but removed for security reasons. 
+# Please replace the placeholders with your actual values before running the code.
 
 GATEWAY_URL = "<gateway_url>"   # TODO: Replace with your Gateway URL
 KB_ID       = "<kbid>"          # TODO: Replace with your Knowledge Base ID
@@ -399,7 +403,6 @@ def search_knowledge_base(query: str) -> str:
     Returns:
         Relevant information retrieved from the knowledge base
     """
-    # TODO: Implement the Knowledge Base search
     # Step 1: Guard — if KB_ID is empty return a message
     if not KB_ID:
         return "Knowledge base not configured."
@@ -601,10 +604,26 @@ async def invoke(payload, context=None):
         # Step 5: Connect to the Gateway via MCPClient and extend tools list
         with MCPClient(
             lambda: streamable_http_client(GATEWAY_URL)
-        ) as mcp_client:
-            gateway_tools = mcp_client.list_tools_sync()
-            logger.warning(f"Gateway tools loaded: {[getattr(t, 'tool_name', getattr(t, 'name', str(t))) for t in gateway_tools]}")
-            tools.extend(gateway_tools)
+        ) as gateway_client:
+            try:
+                gateway_tools = gateway_client.list_tools_sync()
+                tools.extend(gateway_tools)
+
+                logger.info(
+                    "Gateway connected successfully. Loaded %d tools.",
+                    len(gateway_tools),
+                )
+
+            except TimeoutError:
+                logger.exception("Gateway tool loading timed out")
+
+            except ConnectionError:
+                logger.exception("Gateway connection failed")
+
+            except Exception as exc:
+                logger.exception(
+                    "Gateway tool loading failed: %s", exc
+                )
 
             # Step 6: Create and invoke the Agent
             system_prompt = (
@@ -612,10 +631,14 @@ async def invoke(payload, context=None):
                 "Use the available tools to answer customer questions accurately about "
                 "products, orders, returns, warranties, and loyalty rewards. "
                 "Always be polite, concise, and helpful. "
-                "Call each tool at most once per request. "
-                "Once a tool returns any result, use that result to answer the customer immediately. "
-                "Never call the same tool more than once. "
-                "If a tool fails or returns no useful data, tell the customer you are unable to help with that request."
+                "Call each non-browser tool at most once per request. "
+                "Once a non-browser tool returns any result, use that result to answer the customer immediately. "
+                "The browser tool is an exception: it requires multiple sequential calls to complete a task "
+                "(init_session → navigate → get content → close) — always follow this sequence without skipping steps. "
+                "Browser session names must use only lowercase letters, numbers, and hyphens "
+                "(no underscores or spaces), and be between 10 and 36 characters long — "
+                "for example 'udacity-session-01' not 'udacity_session'. "
+                "If any non-browser tool fails or returns no useful data, tell the customer you are unable to help with that request."
             )
             summarization_hook = SummarizationHook()
             agent = Agent(
@@ -624,10 +647,7 @@ async def invoke(payload, context=None):
                 hooks=[memory_hook, summarization_hook],
                 system_prompt=system_prompt,
             )
-            response = await asyncio.wait_for(
-                agent.invoke_async(user_input),
-                timeout=60,
-            )
+            response = await agent.invoke_async(user_input)
 
         # Step 7: Return the text from the first content block of the response
         content = response.message.get("content", "")
@@ -635,9 +655,9 @@ async def invoke(payload, context=None):
             return content[0].get("text", "")
         return content
 
-    except Exception as e:
+    except Exception:
         # Step 8: Handle exceptions gracefully
-        logger.error(f"Error during invocation ({type(e).__name__}): {e}")
+        logger.exception("Unhandled error during agent invocation")
         return "I'm sorry, I encountered an error processing your request. Please try again."
 
 

@@ -6,7 +6,7 @@ nav_order: 1
 
 # Customer Support AI Agent
 
-> AWS AI Engineering Nanodegree - Capstone Project Implementation
+> AWS AI Engineering Nanodegree - Module 2 Project Implementation
 
 ## 🎯 Project Overview
 

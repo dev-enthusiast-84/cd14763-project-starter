@@ -1,3 +1,8 @@
+---
+layout: default
+title: API Documentation
+---
+
 # API Documentation
 
 ## Agent Invocation

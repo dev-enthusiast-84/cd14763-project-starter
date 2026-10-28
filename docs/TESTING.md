@@ -1,3 +1,8 @@
+---
+layout: default
+title: Testing Guide
+---
+
 # Testing Guide
 
 ## Pre-Deployment Verification

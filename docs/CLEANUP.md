@@ -1,3 +1,8 @@
+---
+layout: default
+title: Cleanup Guide
+---
+
 # Cleanup Guide
 
 **IMPORTANT:** Only run cleanup after you have:

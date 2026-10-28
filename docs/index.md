@@ -1,3 +1,9 @@
+---
+layout: default
+title: Home
+nav_order: 1
+---
+
 # Customer Support AI Agent
 
 > AWS AI Engineering Nanodegree - Capstone Project Implementation

@@ -1,3 +1,8 @@
+---
+layout: default
+title: Setup & Deployment Guide
+---
+
 # Setup & Deployment Guide
 
 ## Prerequisites
